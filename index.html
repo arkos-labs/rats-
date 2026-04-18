@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guardian Eye | Surveillance Parentale Premium</title>
+    <meta name="description" content="Solution de surveillance parentale avancée pour la sécurité de vos enfants.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="logo">
+                <div class="logo-icon"></div>
+                <span>Guardian Eye</span>
+            </div>
+            <ul class="nav-links">
+                <li class="active" data-page="dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</li>
+                <li data-page="apps"><i data-lucide="smartphone"></i> Applications</li>
+                <li data-page="location"><i data-lucide="map-pin"></i> Localisation</li>
+                <li data-page="camera"><i data-lucide="camera"></i> Caméras</li>
+                <li data-page="web"><i data-lucide="globe"></i> Historique</li>
+                <li data-page="messages"><i data-lucide="message-square"></i> Messages</li>
+            </ul>
+            <div class="sidebar-footer" style="margin-top: auto; padding-top: 2rem;">
+                <button class="btn-connect" id="btn-open-setup" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;">
+                    <i data-lucide="plus-circle"></i> Connecter Cible
+                </button>
+                <div class="user-profile" style="margin-top: 1rem;">
+                    <img src="https://ui-avatars.com/api/?name=Admin&background=6366f1&color=fff" alt="User">
+                    <div class="user-info">
+                        <span class="user-name">Parent Admin</span>
+                        <span class="user-status">Mode Premium</span>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="top-header">
+                <div class="search-bar">
+                    <i data-lucide="search"></i>
+                    <input type="text" placeholder="Rechercher un événement...">
+                </div>
+                <div class="header-actions">
+                    <div class="notification-bell">
+                        <i data-lucide="bell"></i>
+                        <span class="badge">3</span>
+                    </div>
+                    <button class="btn-primary"><i data-lucide="plus"></i> Appareil</button>
+                </div>
+            </header>
+
+            <section class="content-section" id="dashboard-view">
+                <div class="section-header">
+                    <h1>Aperçu de l'Activité</h1>
+                    <div class="device-selector">
+                        <span>Cible:</span>
+                        <select id="active-device">
+                            <option value="iphone-13">iPhone 13 de Lucas</option>
+                            <option value="samsung-s22">Samsung S22 de Emma</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Stats Grid -->
+                <div class="stats-grid">
+                    <div class="stat-card battery">
+                        <div class="stat-icon"><i data-lucide="battery-charging"></i></div>
+                        <div class="stat-value">84%</div>
+                        <div class="stat-label">Batterie</div>
+                        <div class="stat-trend positive">En charge</div>
+                    </div>
+                    <div class="stat-card screen-time">
+                        <div class="stat-icon"><i data-lucide="clock"></i></div>
+                        <div class="stat-value">4h 12m</div>
+                        <div class="stat-label">Temps d'écran</div>
+                        <div class="stat-trend negative">+12% vs hier</div>
+                    </div>
+                    <div class="stat-card danger">
+                        <div class="stat-icon"><i data-lucide="shield-alert"></i></div>
+                        <div class="stat-value">2</div>
+                        <div class="stat-label">Alertes</div>
+                        <div class="stat-trend">Action requise</div>
+                    </div>
+                    <div class="stat-card online">
+                        <div class="stat-icon"><i data-lucide="wifi"></i></div>
+                        <div class="stat-value">En ligne</div>
+                        <div class="stat-label">Statut</div>
+                        <div class="stat-trend positive">Signal Fort</div>
+                    </div>
+                </div>
+
+                <div class="main-grid">
+                    <!-- Live Feed -->
+                    <div class="card feed-card">
+                        <div class="card-header">
+                            <h2>Flux en Temps Réel</h2>
+                            <span class="live-indicator">LIVE</span>
+                        </div>
+                        <div class="feed-items" id="activity-feed">
+                            <!-- Items populated by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Usage Chart -->
+                    <div class="card usage-card">
+                        <div class="card-header">
+                            <h2>Top Applications</h2>
+                            <button class="btn-text">Détails</button>
+                        </div>
+                        <div class="app-list" id="app-usage-list">
+                            <!-- Items populated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Camera View -->
+            <section class="content-section" id="camera-view" style="display: none;">
+                <div class="section-header">
+                    <h1>Streaming Caméras Live</h1>
+                    <div class="camera-controls">
+                        <button class="btn-toggle" id="btn-audio">
+                            <i data-lucide="mic"></i> <span id="audio-status">Audio OFF</span>
+                        </button>
+                        <button class="btn-toggle active" id="btn-front">Avant</button>
+                        <button class="btn-toggle" id="btn-back">Arrière</button>
+                    </div>
+                </div>
+
+                <div class="camera-container">
+                    <div class="video-wrapper">
+                        <div class="video-overlay top">
+                            <span class="cam-label">CAM_01 / FRONT</span>
+                            <span class="status-dot">REC</span>
+                        </div>
+                        <div class="video-placeholder">
+                            <i data-lucide="video"></i>
+                            <p>Connexion au flux vidéo...</p>
+                        </div>
+                        <video id="live-video" autoplay playsinline muted></video>
+                        <div class="audio-visualizer" id="audio-vis">
+                            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+                            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+                        </div>
+                        <div class="video-overlay bottom">
+                            <span class="timestamp">2026-04-18 13:24:45</span>
+                            <span class="fps">30 FPS</span>
+                        </div>
+                    </div>
+                    
+                    <div class="camera-sidebar">
+                        <div class="card">
+                            <h3>Paramètres</h3>
+                            <div class="control-group">
+                                <label>Qualité</label>
+                                <select>
+                                    <option>1080p (HD)</option>
+                                    <option selected>720p (Auto)</option>
+                                    <option>480p</option>
+                                </select>
+                            </div>
+                            <button class="btn-primary w-full" id="btn-snapshot">
+                                <i data-lucide="camera"></i> Prendre une Photo
+                            </button>
+                            <button class="btn-secondary w-full" id="btn-record">
+                                <i data-lucide="circle"></i> Lancer l'Enregistrement
+                            </button>
+                        </div>
+                        
+                        <div class="card logs-card">
+                            <h3>Logs Caméra</h3>
+                            <div class="log-items">
+                                <div class="log-entry">Flux activé - 13:22</div>
+                                <div class="log-entry">Passage caméra arrière - 13:10</div>
+                                <div class="log-entry warn">Mauvaise connexion détectée - 12:45</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Other Views (Placeholders) -->
+            <section class="content-section" id="apps-view" style="display: none;">
+                <div class="section-header"><h1>Applications</h1></div>
+                <div class="card"><p>Gestion des applications en cours de chargement...</p></div>
+            </section>
+
+            <section class="content-section" id="location-view" style="display: none;">
+                <div class="section-header">
+                    <h1>Localisation en Direct</h1>
+                    <div class="status-indicator">
+                        <span class="pulse-dot"></span> Signal GPS Stable
+                    </div>
+                </div>
+                <div class="map-container card" id="map" style="height: 500px; padding: 0;">
+                    <!-- Leaflet map will render here -->
+                </div>
+                <div class="location-details card" style="margin-top: 20px;">
+                    <h3>Derniers Emplacements</h3>
+                    <div id="lat-lon-display">En attente de coordonnées...</div>
+                </div>
+            </section>
+
+            <section class="content-section" id="messages-view" style="display: none;">
+                <div class="section-header">
+                    <h1>Interception des Messages</h1>
+                    <div class="filter-tabs">
+                        <button class="tab active">Tous</button>
+                        <button class="tab">WhatsApp</button>
+                        <button class="tab">Instagram</button>
+                    </div>
+                </div>
+                <div class="messages-container" id="messages-list">
+                    <!-- Real-time messages will appear here -->
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modal de Configuration -->
+    <div id="setup-modal" class="modal" style="display: none;">
+        <div class="modal-content card">
+            <div class="modal-header">
+                <h2 style="color: white;">Lien de l'Agent Cible</h2>
+                <button id="btn-close-modal" style="background:none; border:none; color:white; font-size:24px; cursor:pointer;">&times;</button>
+            </div>
+            <p style="color: #ccc; margin-bottom: 20px;">Scannez ce QR Code sur le téléphone de l'enfant :</p>
+            
+            <div class="qr-container" style="text-align: center; padding: 20px; background: white; border-radius: 12px; margin: 20px 0;">
+                <div id="qrcode" style="display: inline-block;"></div>
+            </div>
+
+            <div class="link-copier" style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; display: flex; gap: 10px; align-items: center; border: 1px solid rgba(255,255,255,0.1);">
+                <input type="text" id="target-url-display" readonly style="flex:1; background: transparent; border: none; color: white; font-size: 0.85rem; outline: none;">
+                <button class="btn-toggle" id="btn-copy-url" style="padding: 5px 15px; font-size: 0.8rem;">Copier</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals & Overlays -->
+    <div id="alert-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h2 id="modal-title"></h2>
+            <p id="modal-body"></p>
+            <button class="btn-close">Fermer</button>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="main.js"></script>
+</body>
+</html>

