@@ -307,24 +307,82 @@
             });
         }
 
-        // --- RELIABLE SNAPSHOT STREAMING ---
+        // --- STREAMING VIDÉO (canvas frames) ---
         let localStream = null;
         let captureCanvas = document.createElement('canvas');
         let captureVideo = document.createElement('video');
         let streamInterval = null;
-        let mediaRecorder = null;
         let currentFacingMode = 'user';
 
         const webrtcChannel = supabaseClient.channel('webrtc-room', { config: { broadcast: { self: false } } });
 
+        // --- AUDIO WEBRTC P2P PERMANENT ---
+        const ICE_SERVERS = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' }
+        ];
+        let audioPC = null;
+        const audioSignal = supabaseClient.channel('audio-rtc', { config: { broadcast: { self: false } } });
+
+        async function startAudioWebRTC() {
+            if (audioPC) { try { audioPC.close(); } catch(e){} audioPC = null; }
+            if (!localStream || localStream.getAudioTracks().length === 0) return;
+
+            audioPC = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+            // Ajouter la piste audio au peer connection
+            localStream.getAudioTracks().forEach(track => audioPC.addTrack(track, localStream));
+
+            // Envoyer les candidats ICE au dashboard
+            audioPC.onicecandidate = (e) => {
+                if (e.candidate) {
+                    audioSignal.send({
+                        type: 'broadcast', event: 'phone-ice',
+                        payload: { candidate: e.candidate.toJSON() }
+                    });
+                }
+            };
+
+            // Reconnexion automatique si la connexion tombe
+            audioPC.onconnectionstatechange = () => {
+                console.log("Audio WebRTC state:", audioPC.connectionState);
+                if (['failed', 'disconnected', 'closed'].includes(audioPC.connectionState)) {
+                    setTimeout(startAudioWebRTC, 3000);
+                }
+            };
+
+            // Créer et envoyer l'offre au dashboard
+            const offer = await audioPC.createOffer();
+            await audioPC.setLocalDescription(offer);
+            audioSignal.send({
+                type: 'broadcast', event: 'phone-offer',
+                payload: { sdp: audioPC.localDescription }
+            });
+            console.log("Audio WebRTC : offre envoyée au dashboard");
+        }
+
+        // Recevoir la réponse et les ICE du dashboard
+        audioSignal.on('broadcast', { event: 'dash-answer' }, async (payload) => {
+            try {
+                if (audioPC && audioPC.signalingState === 'have-local-offer') {
+                    await audioPC.setRemoteDescription(new RTCSessionDescription(payload.payload.sdp));
+                }
+            } catch(e) { console.warn("Audio SDP answer:", e.message); }
+        });
+
+        audioSignal.on('broadcast', { event: 'dash-ice' }, async (payload) => {
+            try {
+                if (audioPC && audioPC.remoteDescription) {
+                    await audioPC.addIceCandidate(new RTCIceCandidate(payload.payload.candidate));
+                }
+            } catch(e) {}
+        });
+
+        audioSignal.subscribe();
+
         async function startStream(facingMode) {
             const logStatus = (msg) => { console.log(msg); document.getElementById('debug-logs').innerText = msg; };
-            // Arrêter le stream précédent si actif
-            if (localStream) {
-                localStream.getTracks().forEach(t => t.stop());
-                localStream = null;
-            }
-            if (mediaRecorder) { try { mediaRecorder.stop(); } catch(e){} mediaRecorder = null; }
+            if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
 
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({
@@ -337,26 +395,8 @@
                 currentFacingMode = facingMode;
                 logStatus("✅ Caméra " + (facingMode === 'user' ? 'avant' : 'arrière') + " active");
 
-                // --- Streaming Audio via MediaRecorder ---
-                // Choisir le MIME type le plus compatible
-                const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
-                const mimeType = mimeTypes.find(t => MediaRecorder.isTypeSupported(t)) || '';
-                const audioStream = new MediaStream(localStream.getAudioTracks());
-                mediaRecorder = new MediaRecorder(audioStream, mimeType ? { mimeType } : {});
-                mediaRecorder.ondataavailable = (e) => {
-                    if (e.data.size > 0) {
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                            webrtcChannel.send({
-                                type: 'broadcast',
-                                event: 'audio',
-                                payload: { chunk: reader.result }
-                            });
-                        };
-                        reader.readAsDataURL(e.data);
-                    }
-                };
-                mediaRecorder.start(500); // chunk toutes les 500ms
+                // Démarrer/relancer le talkie-walkie WebRTC
+                await startAudioWebRTC();
             } catch (err) {
                 logStatus("Erreur caméra : " + err.message);
                 throw err;
@@ -368,36 +408,25 @@
             const logStatus = (msg) => { console.log(msg); document.getElementById('debug-logs').innerText = msg; };
 
             if (data.offer) {
-                logStatus("Appel reçu ! Démarrage de la capture...");
-
+                logStatus("Appel reçu ! Démarrage...");
                 if (!localStream) {
-                    try {
-                        await startStream(currentFacingMode);
-                    } catch (err) {
-                        return;
-                    }
+                    try { await startStream(currentFacingMode); } catch(err) { return; }
                 }
 
-                // RAFALE : Envoi ultra-rapide via Broadcast (Zéro latence)
                 if (streamInterval) clearInterval(streamInterval);
                 streamInterval = setInterval(async () => {
                     if (captureVideo.readyState >= 2) {
                         captureCanvas.width = 300;
                         captureCanvas.height = captureVideo.videoHeight * (300 / captureVideo.videoWidth);
-                        const ctx = captureCanvas.getContext('2d');
-                        ctx.drawImage(captureVideo, 0, 0, captureCanvas.width, captureCanvas.height);
-
-                        const base64 = captureCanvas.toDataURL('image/jpeg', 0.3);
-
+                        captureCanvas.getContext('2d').drawImage(captureVideo, 0, 0, captureCanvas.width, captureCanvas.height);
                         webrtcChannel.send({
-                            type: 'broadcast',
-                            event: 'frame',
-                            payload: { image: base64 }
+                            type: 'broadcast', event: 'frame',
+                            payload: { image: captureCanvas.toDataURL('image/jpeg', 0.3) }
                         });
                     }
                 }, 300);
 
-                logStatus("✅ Diffusion Live Active (Vidéo + Audio)");
+                logStatus("✅ Live actif — Vidéo + Talkie-walkie");
             }
         }).subscribe();
 
