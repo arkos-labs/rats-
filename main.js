@@ -234,18 +234,25 @@ async function startWebRTC() {
     webrtcChannel = _supabase.channel('webrtc-room', { config: { broadcast: { self: false } } });
 
     pc.ontrack = e => {
-        console.log("SUCCÈS : Flux capté !");
-        if (streamStatus) streamStatus.textContent = "EN DIRECT";
+        console.log("Flux WebRTC reçu ! Amorce du lecteur...");
+        if (streamStatus) streamStatus.textContent = "EN DIRECT (Amorçage...)";
+        
         liveVideo.srcObject = e.streams[0];
         liveVideo.style.display = 'block';
         if (videoPlaceholder) videoPlaceholder.style.display = 'none';
         
-        // Forçage de lecture
-        liveVideo.muted = false;
-        liveVideo.play().catch(err => {
-            console.log("Autoplay bloqué, clic requis.");
-            streamStatus.textContent = "Cliquez à nouveau pour le son";
-        });
+        // Boucle de lecture forcée
+        let attempts = 0;
+        const playLoop = setInterval(() => {
+            attempts++;
+            if (liveVideo.readyState >= 2) { // 2 = HAVE_CURRENT_DATA
+                liveVideo.play().then(() => {
+                    if (streamStatus) streamStatus.textContent = "EN DIRECT";
+                    clearInterval(playLoop);
+                }).catch(() => {});
+            }
+            if (attempts > 20) clearInterval(playLoop); // Stop après 10s
+        }, 500);
     };
 
     pc.onicecandidate = e => {
