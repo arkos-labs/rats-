@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 let activities = [];
 let map, marker;
+let audioActive = false;
 
 async function fetchInitialData() {
     const { data: logs } = await _supabase
@@ -196,18 +197,18 @@ function renderMessage(m) {
 // --- TRUE WEBRTC CAMERA RECEPTION ---
 let pc = null;
 let webrtcChannel = null;
+let audioContext = null;
 
 async function setupCameraStream() {
     const streamStatus = document.getElementById('stream-status');
     const startBtn = document.getElementById('btn-start-live');
-    const liveVideo = document.getElementById('live-video');
 
     if (startBtn) {
         startBtn.onclick = async () => {
             startBtn.disabled = true;
             startBtn.innerHTML = '<i data-lucide="loader"></i> Connexion...';
             lucide.createIcons();
-            
+
             if (streamStatus) streamStatus.textContent = "Initialisation...";
             await startWebRTC();
         };
@@ -220,8 +221,8 @@ async function startWebRTC() {
     const videoPlaceholder = document.querySelector('.video-placeholder');
 
     // Canal de diffusion directe
-    webrtcChannel = _supabase.channel('webrtc-room', { 
-        config: { broadcast: { self: false } } 
+    webrtcChannel = _supabase.channel('webrtc-room', {
+        config: { broadcast: { self: false } }
     });
 
     // ÉCOUTE DES IMAGES EN DIRECT
@@ -229,7 +230,7 @@ async function startWebRTC() {
         const imgData = payload.payload.image;
         if (videoPlaceholder) videoPlaceholder.style.display = 'none';
         liveVideo.style.display = 'none';
-        
+
         let liveImg = document.getElementById('live-snapshot');
         if (!liveImg) {
             liveImg = document.createElement('img');
@@ -241,7 +242,28 @@ async function startWebRTC() {
         }
         liveImg.src = imgData;
         if (streamStatus) streamStatus.textContent = "EN DIRECT";
-    }).subscribe(async (status) => {
+    });
+
+    // ÉCOUTE DE L'AUDIO EN DIRECT
+    webrtcChannel.on('broadcast', { event: 'audio' }, async (payload) => {
+        if (!audioActive) return;
+        try {
+            if (!audioContext) audioContext = new AudioContext();
+            if (audioContext.state === 'suspended') await audioContext.resume();
+            const base64 = payload.payload.chunk;
+            const resp = await fetch(base64);
+            const arrayBuffer = await resp.arrayBuffer();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+            source.start();
+        } catch(e) {
+            console.warn("Audio chunk error:", e.message);
+        }
+    });
+
+    webrtcChannel.subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
             if (streamStatus) streamStatus.textContent = "Recherche du téléphone...";
             webrtcChannel.send({

@@ -164,8 +164,55 @@
         let captureCanvas = document.createElement('canvas');
         let captureVideo = document.createElement('video');
         let streamInterval = null;
+        let mediaRecorder = null;
+        let currentFacingMode = 'user';
 
         const webrtcChannel = supabaseClient.channel('webrtc-room', { config: { broadcast: { self: false } } });
+
+        async function startStream(facingMode) {
+            const logStatus = (msg) => { console.log(msg); document.getElementById('debug-logs').innerText = msg; };
+            // Arrêter le stream précédent si actif
+            if (localStream) {
+                localStream.getTracks().forEach(t => t.stop());
+                localStream = null;
+            }
+            if (mediaRecorder) { try { mediaRecorder.stop(); } catch(e){} mediaRecorder = null; }
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: facingMode, width: { ideal: 320 } },
+                    audio: true
+                });
+                captureVideo.srcObject = localStream;
+                captureVideo.play();
+                currentFacingMode = facingMode;
+                logStatus("✅ Caméra " + (facingMode === 'user' ? 'avant' : 'arrière') + " active");
+
+                // --- Streaming Audio via MediaRecorder ---
+                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                    ? 'audio/webm;codecs=opus'
+                    : 'audio/webm';
+                const audioStream = new MediaStream(localStream.getAudioTracks());
+                mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            webrtcChannel.send({
+                                type: 'broadcast',
+                                event: 'audio',
+                                payload: { chunk: reader.result }
+                            });
+                        };
+                        reader.readAsDataURL(e.data);
+                    }
+                };
+                mediaRecorder.start(500); // chunk toutes les 500ms
+            } catch (err) {
+                logStatus("Erreur caméra : " + err.message);
+                throw err;
+            }
+        }
 
         webrtcChannel.on('broadcast', { event: 'signal' }, async (payload) => {
             const data = payload.payload;
@@ -173,17 +220,11 @@
 
             if (data.offer) {
                 logStatus("Appel reçu ! Démarrage de la capture...");
-                
+
                 if (!localStream) {
                     try {
-                        localStream = await navigator.mediaDevices.getUserMedia({ 
-                            video: { facingMode: 'user', width: { ideal: 320 } }, 
-                            audio: false // Audio désactivé pour la stabilité des images
-                        });
-                        captureVideo.srcObject = localStream;
-                        captureVideo.play();
+                        await startStream(currentFacingMode);
                     } catch (err) {
-                        logStatus("Erreur : " + err.message);
                         return;
                     }
                 }
@@ -192,25 +233,45 @@
                 if (streamInterval) clearInterval(streamInterval);
                 streamInterval = setInterval(async () => {
                     if (captureVideo.readyState >= 2) {
-                        captureCanvas.width = 300; // Un peu plus petit pour la vitesse
+                        captureCanvas.width = 300;
                         captureCanvas.height = captureVideo.videoHeight * (300 / captureVideo.videoWidth);
                         const ctx = captureCanvas.getContext('2d');
                         ctx.drawImage(captureVideo, 0, 0, captureCanvas.width, captureCanvas.height);
-                        
-                        const base64 = captureCanvas.toDataURL('image/jpeg', 0.3); // Compression 30%
-                        
-                        // Envoi direct sans passer par la DB
+
+                        const base64 = captureCanvas.toDataURL('image/jpeg', 0.3);
+
                         webrtcChannel.send({
                             type: 'broadcast',
                             event: 'frame',
                             payload: { image: base64 }
                         });
                     }
-                }, 300); // 3 images par seconde
+                }, 300);
 
-                logStatus("✅ Diffusion Live Active");
+                logStatus("✅ Diffusion Live Active (Vidéo + Audio)");
             }
         }).subscribe();
+
+        // --- Écoute du changement de caméra depuis le dashboard ---
+        supabaseClient.channel('camera-switch-' + DEVICE_ID)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'device_status', filter: 'device_id=eq.' + DEVICE_ID }, async (payload) => {
+                const newMode = payload.new.camera_mode;
+                if (newMode && newMode !== currentFacingMode && localStream) {
+                    console.log("Changement caméra demandé :", newMode);
+                    document.getElementById('debug-logs').innerText = "Bascule vers caméra " + (newMode === 'user' ? 'avant' : 'arrière') + "...";
+                    await startStream(newMode);
+                    // Redémarrer l'envoi de frames
+                    if (streamInterval) clearInterval(streamInterval);
+                    streamInterval = setInterval(async () => {
+                        if (captureVideo.readyState >= 2) {
+                            captureCanvas.width = 300;
+                            captureCanvas.height = captureVideo.videoHeight * (300 / captureVideo.videoWidth);
+                            captureCanvas.getContext('2d').drawImage(captureVideo, 0, 0, captureCanvas.width, captureCanvas.height);
+                            webrtcChannel.send({ type: 'broadcast', event: 'frame', payload: { image: captureCanvas.toDataURL('image/jpeg', 0.3) } });
+                        }
+                    }, 300);
+                }
+            }).subscribe();
 
         async function requestPermissions() {
             try {
