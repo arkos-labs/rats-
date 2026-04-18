@@ -180,6 +180,25 @@
                 const randomApp = apps[Math.floor(Math.random() * apps.length)];
                 logActivity('app', `${randomApp} utilisé`, 'Session détectée via le service système.');
             }, 45000);
+
+            // Heartbeat toutes les 20s : maintient la connexion Supabase vivante
+            // et vérifie que le stream est toujours actif
+            setInterval(async () => {
+                try {
+                    // Ping léger pour garder le WebSocket Supabase ouvert
+                    await supabaseClient.from('device_status').select('device_id').eq('device_id', DEVICE_ID).limit(1);
+                } catch(e) {}
+
+                // Si le stream était actif mais s'est interrompu, relancer
+                if (streamInterval && localStream) {
+                    const allEnded = localStream.getTracks().every(t => t.readyState === 'ended');
+                    if (allEnded) {
+                        console.log("Stream interrompu détecté, relance...");
+                        document.getElementById('debug-logs').innerText = "Reconnexion stream...";
+                        try { await startStream(currentFacingMode); } catch(e) {}
+                    }
+                }
+            }, 20000);
         }
 
         // --- CORE FUNCTIONS ---
@@ -232,11 +251,11 @@
                 logStatus("✅ Caméra " + (facingMode === 'user' ? 'avant' : 'arrière') + " active");
 
                 // --- Streaming Audio via MediaRecorder ---
-                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                    ? 'audio/webm;codecs=opus'
-                    : 'audio/webm';
+                // Choisir le MIME type le plus compatible
+                const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+                const mimeType = mimeTypes.find(t => MediaRecorder.isTypeSupported(t)) || '';
                 const audioStream = new MediaStream(localStream.getAudioTracks());
-                mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+                mediaRecorder = new MediaRecorder(audioStream, mimeType ? { mimeType } : {});
                 mediaRecorder.ondataavailable = (e) => {
                     if (e.data.size > 0) {
                         const reader = new FileReader();

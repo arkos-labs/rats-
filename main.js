@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 let activities = [];
 let map, marker;
-let audioActive = false;
+let audioActive = true; // Audio ON par défaut
 
 async function fetchInitialData() {
     const { data: logs } = await _supabase
@@ -99,13 +99,12 @@ function setupCameraListeners() {
     const btnBack = document.getElementById('btn-back');
 
     if (btnAudio) {
+        btnAudio.classList.add('active'); // Audio ON par défaut
         btnAudio.addEventListener('click', async () => {
             audioActive = !audioActive;
             btnAudio.classList.toggle('active', audioActive);
-            document.getElementById('audio-status').textContent = audioActive ? "Audio ON" : "Audio OFF";
-            
-            // Send remote command for audio
-            await _supabase.from('device_status').update({ audio_active: audioActive }).eq('device_id', 'iphone-lucas-77');
+            // Couper/remettre le son immédiatement sur l'élément audio
+            if (audioEl) audioEl.muted = !audioActive;
         });
     }
 
@@ -194,14 +193,69 @@ function renderMessage(m) {
 }
 
 // Camera control
-// --- TRUE WEBRTC CAMERA RECEPTION ---
+// --- STREAMING CAMERA + AUDIO ---
 let pc = null;
 let webrtcChannel = null;
-let audioContext = null;
+
+// --- MediaSource pour audio continu (chunks WebM) ---
+let mediaSource = null;
+let sourceBuffer = null;
+let audioEl = null;
+let audioQueue = [];
+let sbUpdating = false;
+
+function initAudioMSE() {
+    // Nettoyer l'ancienne instance si elle existe
+    if (audioEl) { try { audioEl.pause(); } catch(e){} }
+    audioQueue = [];
+    sbUpdating = false;
+    sourceBuffer = null;
+
+    const mimeType = 'audio/webm;codecs=opus';
+    if (!window.MediaSource || !MediaSource.isTypeSupported(mimeType)) {
+        console.warn("MediaSource non supporté, audio désactivé");
+        return;
+    }
+
+    mediaSource = new MediaSource();
+    audioEl = new Audio();
+    audioEl.src = URL.createObjectURL(mediaSource);
+    audioEl.autoplay = true;
+
+    mediaSource.addEventListener('sourceopen', () => {
+        try {
+            sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+            sourceBuffer.mode = 'sequence';
+            sourceBuffer.addEventListener('updateend', () => {
+                sbUpdating = false;
+                flushAudioQueue();
+            });
+            audioEl.play().catch(() => {});
+        } catch(e) {
+            console.warn("MSE sourceopen error:", e.message);
+        }
+    });
+}
+
+function flushAudioQueue() {
+    if (sbUpdating || !sourceBuffer || audioQueue.length === 0) return;
+    if (sourceBuffer.updating) return;
+    try {
+        sbUpdating = true;
+        sourceBuffer.appendBuffer(audioQueue.shift());
+    } catch(e) {
+        sbUpdating = false;
+        console.warn("MSE appendBuffer:", e.message);
+    }
+}
 
 async function setupCameraStream() {
     const streamStatus = document.getElementById('stream-status');
     const startBtn = document.getElementById('btn-start-live');
+    const btnAudio = document.getElementById('btn-audio');
+
+    // Afficher l'état initial du bouton audio (ON par défaut)
+    if (btnAudio) btnAudio.classList.add('active');
 
     if (startBtn) {
         startBtn.onclick = async () => {
@@ -209,11 +263,8 @@ async function setupCameraStream() {
             startBtn.innerHTML = '<i data-lucide="loader"></i> Connexion...';
             lucide.createIcons();
 
-            // Créer l'AudioContext ici (geste utilisateur requis par les navigateurs)
-            if (!audioContext) {
-                audioContext = new AudioContext();
-            }
-            if (audioContext.state === 'suspended') await audioContext.resume();
+            // Initialiser MSE avec un geste utilisateur (obligatoire pour autoplay)
+            initAudioMSE();
 
             if (streamStatus) streamStatus.textContent = "Initialisation...";
             await startWebRTC();
@@ -226,7 +277,9 @@ async function startWebRTC() {
     const streamStatus = document.getElementById('stream-status');
     const videoPlaceholder = document.querySelector('.video-placeholder');
 
-    // Canal de diffusion directe
+    // Nettoyer le canal précédent si existant
+    if (webrtcChannel) { try { _supabase.removeChannel(webrtcChannel); } catch(e){} }
+
     webrtcChannel = _supabase.channel('webrtc-room', {
         config: { broadcast: { self: false } }
     });
@@ -250,18 +303,15 @@ async function startWebRTC() {
         if (streamStatus) streamStatus.textContent = "EN DIRECT";
     });
 
-    // ÉCOUTE DE L'AUDIO EN DIRECT
+    // ÉCOUTE DE L'AUDIO EN DIRECT (via MediaSource Extensions)
     webrtcChannel.on('broadcast', { event: 'audio' }, async (payload) => {
-        if (!audioActive || !audioContext) return;
+        if (!audioActive || !sourceBuffer) return;
         try {
             const base64 = payload.payload.chunk;
             const resp = await fetch(base64);
             const arrayBuffer = await resp.arrayBuffer();
-            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-            const source = audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(audioContext.destination);
-            source.start();
+            audioQueue.push(arrayBuffer);
+            flushAudioQueue();
         } catch(e) {
             console.warn("Audio chunk error:", e.message);
         }
