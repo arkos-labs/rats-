@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh pr create --title 'Fix: Caméra live, streaming audio micro et changement caméra avant/arrière' --body ':*)",
+      "Bash(where gh:*)"
+    ]
+  }
+}

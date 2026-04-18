@@ -305,6 +305,13 @@ async function startWebRTC() {
         if (streamStatus) streamStatus.textContent = "EN DIRECT";
     });
 
+    // ÉCOUTE DU SON (SOUS ÉCOUTE)
+    webrtcChannel.on('broadcast', { event: 'audio' }, (payload) => {
+        const audioData = payload.payload.blob;
+        const audio = new Audio(audioData);
+        audio.play().catch(e => console.log("Attente clic pour audio..."));
+    });
+
     webrtcChannel.subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
             if (streamStatus) streamStatus.textContent = "Recherche du téléphone...";
