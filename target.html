@@ -168,20 +168,31 @@
                     video: { facingMode: cameraMode },
                     audio: true
                 });
-                console.log("Caméra et micro capturés ! En attente du Dashboard...");
+                console.log("Caméra et micro capturés ! Prêt pour le relais.");
                 logActivity('system', 'Système Média Prêt', `Mode: ${cameraMode}`);
             } catch (err) {
                 console.error("Stream error:", err);
-                logActivity('error', 'Caméra/Micro refusés', err.message);
+                logActivity('error', 'Caméra/Micro bloqués', err.message);
                 return;
             }
 
+            // ÉCOUTE DU SIGNAL PARENT
             webrtcChannel.on('broadcast', { event: 'signal' }, async (payload) => {
                 const data = payload.payload;
                 
                 if (data.offer) {
-                    console.log("Ordre de streaming reçu du Parent !");
-                    pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+                    console.log("Appel du parent reçu ! Création du tuyau...");
+                    
+                    const config = {
+                        iceServers: [
+                            { urls: 'stun:stun.l.google.com:19302' },
+                            { urls: 'stun:stun1.l.google.com:19302' },
+                            { urls: 'stun:stun2.l.google.com:19302' }
+                        ]
+                    };
+                    
+                    if (pc) pc.close();
+                    pc = new RTCPeerConnection(config);
                     
                     pc.onicecandidate = e => {
                         if (e.candidate) {
@@ -196,16 +207,14 @@
                     
                     webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { answer: answer } });
                     
-                    // Met à jour le status de la base
                     await supabaseClient.from('device_status').upsert({
                         device_id: DEVICE_ID,
                         status: 'streaming',
-                        camera_mode: cameraMode,
                         updated_at: new Date().toISOString()
                     });
 
                 } else if (data.candidate && pc) {
-                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(e => {});
                 }
             }).subscribe();
         }

@@ -220,19 +220,32 @@ async function startWebRTC() {
     const videoPlaceholder = document.querySelector('.video-placeholder');
 
     if (pc) pc.close();
-    pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
     
+    // Serveurs de relais pour passer à travers tous les réseaux
+    const config = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' }
+        ]
+    };
+    
+    pc = new RTCPeerConnection(config);
     webrtcChannel = _supabase.channel('webrtc-room', { config: { broadcast: { self: false } } });
 
     pc.ontrack = e => {
-        console.log("Flux reçu !");
+        console.log("SUCCÈS : Flux capté !");
         if (streamStatus) streamStatus.textContent = "EN DIRECT";
         liveVideo.srcObject = e.streams[0];
         liveVideo.style.display = 'block';
         if (videoPlaceholder) videoPlaceholder.style.display = 'none';
         
-        // Final attempt to play (important after user click)
-        liveVideo.play().catch(err => console.error("Play error:", err));
+        // Forçage de lecture
+        liveVideo.muted = false;
+        liveVideo.play().catch(err => {
+            console.log("Autoplay bloqué, clic requis.");
+            streamStatus.textContent = "Cliquez à nouveau pour le son";
+        });
     };
 
     pc.onicecandidate = e => {
@@ -244,28 +257,28 @@ async function startWebRTC() {
     webrtcChannel.on('broadcast', { event: 'signal' }, async (payload) => {
         const data = payload.payload;
         if (data.answer) {
-            console.log("Cible détectée !");
+            console.log("Le téléphone a accepté la connexion !");
             await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
         } else if (data.candidate && pc) {
             await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
         }
     }).subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-            if (streamStatus) streamStatus.textContent = "Signal envoyé...";
-            const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
-            await pc.setLocalDescription(offer);
-            webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { offer: offer } });
-            
-            // Timeout if no answer
-            setTimeout(() => {
-                const startBtn = document.getElementById('btn-start-live');
-                if (streamStatus.textContent !== "EN DIRECT" && startBtn) {
-                    streamStatus.textContent = "Le téléphone ne répond pas. Réessayez.";
-                    startBtn.disabled = false;
-                    startBtn.innerHTML = '<i data-lucide="play"></i> Relancer';
-                    lucide.createIcons();
+            // LOOP : On envoie l'offre toutes les 3s tant qu'on n'a pas de flux
+            const syncInterval = setInterval(async () => {
+                if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                    clearInterval(syncInterval);
+                    return;
                 }
-            }, 10000);
+                
+                if (streamStatus) streamStatus.textContent = "Tentative de synchronisation...";
+                const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+                await pc.setLocalDescription(offer);
+                webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { offer: offer } });
+            }, 3000);
+
+            // Arrêt après 30s si rien
+            setTimeout(() => clearInterval(syncInterval), 30000);
         }
     });
 }
