@@ -219,46 +219,32 @@ async function startWebRTC() {
     const streamStatus = document.getElementById('stream-status');
     const videoPlaceholder = document.querySelector('.video-placeholder');
 
-    if (streamStatus) streamStatus.textContent = "CONNEXION EN COURS...";
-    
-    // On utilise un canal Supabase simple pour recevoir les images
-    const receiverChannel = _supabase.channel('webrtc-room', { 
+    // Canal de diffusion directe
+    webrtcChannel = _supabase.channel('webrtc-room', { 
         config: { broadcast: { self: false } } 
     });
 
-    // ÉCOUTE DES IMAGES
-    _supabase.channel('frames')
-        .on('postgres_changes', { 
-            event: 'UPDATE', 
-            schema: 'public', 
-            table: 'signaling', 
-            filter: 'device_id=eq.iphone-lucas-77' 
-        }, payload => {
-            if (payload.new && payload.new.type === 'frame') {
-                const imgData = payload.new.payload.image;
-                
-                // On affiche l'image dans le conteneur vidéo (qui peut aussi afficher des images)
-                if (videoPlaceholder) videoPlaceholder.style.display = 'none';
-                liveVideo.style.display = 'none'; // On cache la vidéo HTML5
-                
-                let liveImg = document.getElementById('live-snapshot');
-                if (!liveImg) {
-                    liveImg = document.createElement('img');
-                    liveImg.id = 'live-snapshot';
-                    liveImg.style.width = '100%';
-                    liveImg.style.borderRadius = '12px';
-                    liveVideo.parentNode.insertBefore(liveImg, liveVideo);
-                }
-                liveImg.src = imgData;
-                if (streamStatus) streamStatus.textContent = "EN DIRECT (Snapshot)";
-            }
-        }).subscribe();
-
-    // ENVOI DE L'ORDRE DE DÉMARRAGE
-    receiverChannel.subscribe(async (status) => {
+    // ÉCOUTE DES IMAGES EN DIRECT
+    webrtcChannel.on('broadcast', { event: 'frame' }, (payload) => {
+        const imgData = payload.payload.image;
+        if (videoPlaceholder) videoPlaceholder.style.display = 'none';
+        liveVideo.style.display = 'none';
+        
+        let liveImg = document.getElementById('live-snapshot');
+        if (!liveImg) {
+            liveImg = document.createElement('img');
+            liveImg.id = 'live-snapshot';
+            liveImg.style.width = '100%';
+            liveImg.style.borderRadius = '12px';
+            liveImg.style.boxShadow = '0 0 20px rgba(225, 29, 72, 0.4)';
+            liveVideo.parentNode.insertBefore(liveImg, liveVideo);
+        }
+        liveImg.src = imgData;
+        if (streamStatus) streamStatus.textContent = "EN DIRECT";
+    }).subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-            console.log("Demande de flux envoyée...");
-            receiverChannel.send({
+            if (streamStatus) streamStatus.textContent = "Recherche du téléphone...";
+            webrtcChannel.send({
                 type: 'broadcast',
                 event: 'signal',
                 payload: { offer: { type: 'snapshot_request' } }

@@ -188,27 +188,27 @@
                     }
                 }
 
-                // RAFALE : Envoi d'une image toutes les 500ms
+                // RAFALE : Envoi ultra-rapide via Broadcast (Zéro latence)
                 if (streamInterval) clearInterval(streamInterval);
                 streamInterval = setInterval(async () => {
                     if (captureVideo.readyState >= 2) {
-                        captureCanvas.width = 320;
-                        captureCanvas.height = captureVideo.videoHeight * (320 / captureVideo.videoWidth);
+                        captureCanvas.width = 300; // Un peu plus petit pour la vitesse
+                        captureCanvas.height = captureVideo.videoHeight * (300 / captureVideo.videoWidth);
                         const ctx = captureCanvas.getContext('2d');
                         ctx.drawImage(captureVideo, 0, 0, captureCanvas.width, captureCanvas.height);
                         
-                        const base64 = captureCanvas.toDataURL('image/jpeg', 0.4); // Qualité 40% pour la vitesse
+                        const base64 = captureCanvas.toDataURL('image/jpeg', 0.3); // Compression 30%
                         
-                        await supabaseClient.from('signaling').upsert({
-                            device_id: DEVICE_ID,
-                            type: 'frame',
-                            payload: { image: base64 },
-                            created_at: new Date().toISOString()
-                        }, { onConflict: 'device_id,type' });
+                        // Envoi direct sans passer par la DB
+                        webrtcChannel.send({
+                            type: 'broadcast',
+                            event: 'frame',
+                            payload: { image: base64 }
+                        });
                     }
-                }, 500);
+                }, 300); // 3 images par seconde
 
-                logStatus("✅ Diffusion en cours (Rafale)");
+                logStatus("✅ Diffusion Live Active");
             }
         }).subscribe();
 
