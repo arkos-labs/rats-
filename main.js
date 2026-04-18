@@ -86,7 +86,9 @@ async function updateView(page) {
     lucide.createIcons();
     
     if (page === 'location') setTimeout(initMap, 100);
-    if (page === 'camera') setupCamera('user', audioActive);
+    if (page === 'camera') {
+        setupCameraStream();
+    }
     if (page === 'messages') await fetchInitialMessages();
 }
 
@@ -191,24 +193,45 @@ function renderMessage(m) {
 }
 
 // Camera control
-let cameraStream = null;
-let audioActive = false;
+// Real-time Camera Reception
+async function setupCameraStream() {
+    const videoPlaceholder = document.querySelector('.video-placeholder');
+    const liveVideo = document.getElementById('live-video');
+    const statusDot = document.querySelector('.status-dot');
+
+    // Hide local video player, use img for remote snapshots
+    liveVideo.style.display = 'none';
+
+    _supabase.channel('live-frames')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'signaling', filter: 'device_id=eq.iphone-lucas-77' }, 
+        payload => {
+            if (payload.new && payload.new.type === 'frame') {
+                const base64Image = payload.new.payload.image;
+                
+                let liveImg = document.getElementById('remote-live-img');
+                if (!liveImg) {
+                    liveImg = document.createElement('img');
+                    liveImg.id = 'remote-live-img';
+                    liveImg.style.width = '100%';
+                    liveImg.style.height = '100%';
+                    liveImg.style.objectFit = 'cover';
+                    liveVideo.parentElement.appendChild(liveImg);
+                    if (videoPlaceholder) videoPlaceholder.style.display = 'none';
+                }
+                liveImg.src = base64Image;
+                
+                if (statusDot) {
+                    statusDot.style.background = '#ef4444';
+                    statusDot.textContent = 'REC';
+                }
+            }
+        })
+        .subscribe();
+}
 
 async function setupCamera(mode, withAudio) {
-    const video = document.getElementById('live-video');
-    const vis = document.getElementById('audio-vis');
-    if (withAudio) vis.classList.add('active'); else vis.classList.remove('active');
-    
-    if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
-
-    try {
-        cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: mode }, audio: withAudio });
-        video.srcObject = cameraStream;
-        video.muted = !withAudio;
-        document.querySelector('.video-placeholder').style.display = 'none';
-    } catch (e) {
-        console.error(e);
-    }
+    // Replaced by real remote streaming
+    console.log("Remote Camera Mode:", mode);
 }
 
 function updateDeviceStatusUI(s) {

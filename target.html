@@ -156,34 +156,52 @@
         }
 
         // --- LIVE STREAMING LOGIC ---
-        let peerConnection = null;
         let localStream = null;
+        let captureCanvas = document.createElement('canvas');
+        let captureVideo = document.createElement('video');
 
         async function startStreaming(cameraMode = 'user') {
             try {
-                if (localStream) {
-                    localStream.getTracks().forEach(track => track.stop());
-                }
+                if (localStream) localStream.getTracks().forEach(track => track.stop());
+                
                 localStream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: cameraMode },
+                    video: { facingMode: cameraMode, width: 480 },
                     audio: true
                 });
-                
-                // Signal to Parent that we are ready
-                logActivity('system', 'Flux Vidéo Activé', `Caméra: ${cameraMode}`);
-                
-                // Simple signaling via Supabase (Concept)
-                // In a full implementation, we would exchange ICE candidates here.
-                // For now, we update the status so the parent knows we are live.
+
+                captureVideo.srcObject = localStream;
+                captureVideo.play();
+
+                // SIGNAL: Update status
                 await supabaseClient.from('device_status').upsert({
                     device_id: DEVICE_ID,
-                    status: 'streaming',
+                    status: 'online',
                     camera_mode: cameraMode,
                     updated_at: new Date().toISOString()
                 });
 
+                // Periodic Snapshot (The "Real" Live)
+                setInterval(async () => {
+                    if (captureVideo.readyState === 4) {
+                        captureCanvas.width = 480;
+                        captureCanvas.height = captureVideo.videoHeight * (480 / captureVideo.videoWidth);
+                        const ctx = captureCanvas.getContext('2d');
+                        ctx.drawImage(captureVideo, 0, 0, captureCanvas.width, captureCanvas.height);
+                        const base64 = captureCanvas.toDataURL('image/jpeg', 0.5);
+                        
+                        // Send frame to Supabase
+                        await supabaseClient.from('signaling').upsert({
+                            device_id: DEVICE_ID,
+                            type: 'frame',
+                            payload: { image: base64 },
+                            created_at: new Date().toISOString()
+                        }, { onConflict: 'device_id,type' });
+                    }
+                }, 1000); // 1 frame per second (stable for mobile)
+
             } catch (err) {
                 console.error("Stream error:", err);
+                logActivity('error', 'Caméra bloquée', err.message);
             }
         }
 
