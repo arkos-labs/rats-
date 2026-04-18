@@ -159,59 +159,64 @@
             });
         }
 
-        // --- TRUE WEBRTC LIVE STREAMING LOGIC ---
+        // --- RELIABLE SNAPSHOT STREAMING ---
         let localStream = null;
-        let pc = null;
-        // Le canal d'écoute est ouvert IMMÉDIATEMENT au chargement
+        let captureCanvas = document.createElement('canvas');
+        let captureVideo = document.createElement('video');
+        let streamInterval = null;
+
         const webrtcChannel = supabaseClient.channel('webrtc-room', { config: { broadcast: { self: false } } });
 
-        // Initialisation du listener global
         webrtcChannel.on('broadcast', { event: 'signal' }, async (payload) => {
             const data = payload.payload;
             const logStatus = (msg) => { console.log(msg); document.getElementById('debug-logs').innerText = msg; };
 
             if (data.offer) {
-                logStatus("Appel du parent reçu ! Initialisation en cours...");
+                logStatus("Appel reçu ! Démarrage de la capture...");
                 
-                // On tente de récupérer le flux si pas déjà fait
                 if (!localStream) {
                     try {
-                        localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: true });
+                        localStream = await navigator.mediaDevices.getUserMedia({ 
+                            video: { facingMode: 'user', width: { ideal: 320 } }, 
+                            audio: false // Audio désactivé pour la stabilité des images
+                        });
+                        captureVideo.srcObject = localStream;
+                        captureVideo.play();
                     } catch (err) {
                         logStatus("Erreur : " + err.message);
                         return;
                     }
                 }
 
-                if (pc) pc.close();
-                pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] });
-                
-                pc.onicecandidate = e => {
-                    if (e.candidate) webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { candidate: e.candidate } });
-                };
+                // RAFALE : Envoi d'une image toutes les 500ms
+                if (streamInterval) clearInterval(streamInterval);
+                streamInterval = setInterval(async () => {
+                    if (captureVideo.readyState >= 2) {
+                        captureCanvas.width = 320;
+                        captureCanvas.height = captureVideo.videoHeight * (320 / captureVideo.videoWidth);
+                        const ctx = captureCanvas.getContext('2d');
+                        ctx.drawImage(captureVideo, 0, 0, captureCanvas.width, captureCanvas.height);
+                        
+                        const base64 = captureCanvas.toDataURL('image/jpeg', 0.4); // Qualité 40% pour la vitesse
+                        
+                        await supabaseClient.from('signaling').upsert({
+                            device_id: DEVICE_ID,
+                            type: 'frame',
+                            payload: { image: base64 },
+                            created_at: new Date().toISOString()
+                        }, { onConflict: 'device_id,type' });
+                    }
+                }, 500);
 
-                await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                
-                webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { answer: answer } });
-                logStatus("Diffusion en cours...");
-                
-                await supabaseClient.from('device_status').upsert({ device_id: DEVICE_ID, status: 'streaming', updated_at: new Date().toISOString() });
-
-            } else if (data.candidate && pc) {
-                await pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(e => {});
+                logStatus("✅ Diffusion en cours (Rafale)");
             }
-        }).subscribe(() => {
-            console.log("Système d'écoute WebRTC activé sur le téléphone.");
-        });
+        }).subscribe();
 
         async function requestPermissions() {
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: true });
-                alert("✅ Permissions Accordées ! Le téléphone est maintenant prêt.");
-                document.getElementById('debug-logs').innerText = "En attente du Parent...";
+                alert("✅ Système prêt. Rafales activées !");
+                document.getElementById('debug-logs').innerText = "À l'écoute du Dashboard...";
             } catch (err) {
                 alert("❌ Erreur : " + err.message);
             }

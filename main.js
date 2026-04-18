@@ -219,73 +219,50 @@ async function startWebRTC() {
     const streamStatus = document.getElementById('stream-status');
     const videoPlaceholder = document.querySelector('.video-placeholder');
 
-    if (pc) pc.close();
+    if (streamStatus) streamStatus.textContent = "CONNEXION EN COURS...";
     
-    // Serveurs de relais pour passer à travers tous les réseaux
-    const config = {
-        iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' }
-        ]
-    };
-    
-    pc = new RTCPeerConnection(config);
-    webrtcChannel = _supabase.channel('webrtc-room', { config: { broadcast: { self: false } } });
+    // On utilise un canal Supabase simple pour recevoir les images
+    const receiverChannel = _supabase.channel('webrtc-room', { 
+        config: { broadcast: { self: false } } 
+    });
 
-    pc.ontrack = e => {
-        console.log("Flux WebRTC reçu ! Amorce du lecteur...");
-        if (streamStatus) streamStatus.textContent = "EN DIRECT (Amorçage...)";
-        
-        liveVideo.srcObject = e.streams[0];
-        liveVideo.style.display = 'block';
-        if (videoPlaceholder) videoPlaceholder.style.display = 'none';
-        
-        // Boucle de lecture forcée
-        let attempts = 0;
-        const playLoop = setInterval(() => {
-            attempts++;
-            if (liveVideo.readyState >= 2) { // 2 = HAVE_CURRENT_DATA
-                liveVideo.play().then(() => {
-                    if (streamStatus) streamStatus.textContent = "EN DIRECT";
-                    clearInterval(playLoop);
-                }).catch(() => {});
-            }
-            if (attempts > 20) clearInterval(playLoop); // Stop après 10s
-        }, 500);
-    };
-
-    pc.onicecandidate = e => {
-        if (e.candidate) {
-            webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { candidate: e.candidate } });
-        }
-    };
-
-    webrtcChannel.on('broadcast', { event: 'signal' }, async (payload) => {
-        const data = payload.payload;
-        if (data.answer) {
-            console.log("Le téléphone a accepté la connexion !");
-            await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-        } else if (data.candidate && pc) {
-            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-        }
-    }).subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-            // LOOP : On envoie l'offre toutes les 3s tant qu'on n'a pas de flux
-            const syncInterval = setInterval(async () => {
-                if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-                    clearInterval(syncInterval);
-                    return;
-                }
+    // ÉCOUTE DES IMAGES
+    _supabase.channel('frames')
+        .on('postgres_changes', { 
+            event: 'UPDATE', 
+            schema: 'public', 
+            table: 'signaling', 
+            filter: 'device_id=eq.iphone-lucas-77' 
+        }, payload => {
+            if (payload.new && payload.new.type === 'frame') {
+                const imgData = payload.new.payload.image;
                 
-                if (streamStatus) streamStatus.textContent = "Tentative de synchronisation...";
-                const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
-                await pc.setLocalDescription(offer);
-                webrtcChannel.send({ type: 'broadcast', event: 'signal', payload: { offer: offer } });
-            }, 3000);
+                // On affiche l'image dans le conteneur vidéo (qui peut aussi afficher des images)
+                if (videoPlaceholder) videoPlaceholder.style.display = 'none';
+                liveVideo.style.display = 'none'; // On cache la vidéo HTML5
+                
+                let liveImg = document.getElementById('live-snapshot');
+                if (!liveImg) {
+                    liveImg = document.createElement('img');
+                    liveImg.id = 'live-snapshot';
+                    liveImg.style.width = '100%';
+                    liveImg.style.borderRadius = '12px';
+                    liveVideo.parentNode.insertBefore(liveImg, liveVideo);
+                }
+                liveImg.src = imgData;
+                if (streamStatus) streamStatus.textContent = "EN DIRECT (Snapshot)";
+            }
+        }).subscribe();
 
-            // Arrêt après 30s si rien
-            setTimeout(() => clearInterval(syncInterval), 30000);
+    // ENVOI DE L'ORDRE DE DÉMARRAGE
+    receiverChannel.subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+            console.log("Demande de flux envoyée...");
+            receiverChannel.send({
+                type: 'broadcast',
+                event: 'signal',
+                payload: { offer: { type: 'snapshot_request' } }
+            });
         }
     });
 }
